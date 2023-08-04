@@ -1,0 +1,438 @@
+ -- [RPT_VoiceBanking_ModuleUsageSummary_MonthWise] '2022-01-01','2022-12-31',NULL,NULL
+
+alter PROCEDURE [dbo].[RPT_VoiceBanking_ModuleUsageSummary_MonthWise]
+(
+	@FromDate VARCHAR(MAX) = NULL
+	,@ToDate VARCHAR(MAX) = NULL
+	,@DATEFILTER VARCHAR(50) = NULL
+	,@Member VARCHAR(MAX) = NULL
+)
+AS
+BEGIN
+	DECLARE @ChannelId INT = 5
+
+	DECLARE @TempTable TABLE
+	(
+		[Function] VARCHAR(1000)
+		,[RecordCount] INT DEFAULT 0
+		,Remarks NVARCHAR(1000)
+		,SuccessCount INT DEFAULT 0
+		,FailureCount INT DEFAULT 0
+		,VisitedMonth INT
+		,VisitedYear INT
+	)
+
+	DECLARE @TempTable1 TABLE
+	(
+		Id INT
+		,[Function] VARCHAR(1000)
+		,SuccessCount INT DEFAULT 0
+		,FailureCount INT DEFAULT 0
+		,TotalCount INT DEFAULT 0
+		,ParentId INT DEFAULT(0)
+		,VisitedMonth INT
+		,VisitedYear INT
+	)
+
+	DECLARE @Users TABLE
+	(
+		Id INT
+	)
+
+	DECLARE @ModuleUsuages TABLE
+	(
+		ModuleId INT
+		,VisitedTime DATETIME
+		,Remarks VARCHAR(1500)
+		,UserId INT
+	)
+
+	If(( @FromDate is null or @ToDate is null) and @DATEFILTER is not null)  
+	Begin 
+	  SELECT @FromDate = FromDate, @ToDate = ToDate  FROM SelectDate(@DATEFILTER)  
+	End	
+
+	IF @Member = 'null'
+		SET @Member = ''
+	
+	IF ISNULL(@Member, '') != ''
+	BEGIN
+		INSERT INTO @Users
+		SELECT Item FROM dbo.DataSplit(@Member, ';')
+	END
+
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(1,'Total Registerations', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(2,'Specific Account Information', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(3,'Account Balances', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(4,'Savings and Checkings Balances', 3)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(5,'Certificates Balances', 3)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(6,'Loan Balances', 3)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(7,'All Account Balances', 3)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(8,'Deposits and Withdrawals', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(9,'Deposits', 8)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(10,'Withdrawals', 8)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(11,'Cleared Checks', 8)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(12,'All Transactions', 8)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(13,'Write Checks', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(14,'Stop Payment', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(15,'Single Check', 14)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(16,'Range of Checks', 14)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(17,'Tax Information', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(18,'Payroll', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(19,'User Profile', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(20,'Pin Change', 19)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(21,'Phone Number Change', 19)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(22,'Transfers', 0)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(23,'Transfer To/From Non-Loan Accounts', 22)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(24,'Transfer From Loan Accounts', 22)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(25,'Transfer To Loan Accounts', 22)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(26,'Transfer To RELN Accounts', 22)
+	INSERT INTO @TempTable1(Id, [Function], ParentId) Values(27,'Transfer To CRCD Accounts', 22)
+	
+	 
+
+	INSERT INTO @ModuleUsuages(ModuleId, Remarks, UserId, VisitedTime)
+	SELECT MU.ModuleId, MU.Remarks, MU.UserId, MU.VisitedTime
+	FROM ModuleUsages MU WITH(NOLOCK) 
+		INNER JOIN VoiceBanking_Users VU WITH(NOLOCK) ON VU.UserID = MU.UserId
+		INNER JOIN ResourceModules RM WITH(NOLOCK) ON RM.ResModuleId = MU.ModuleId
+	WHERE MU.ChannelId = @ChannelId AND BrandId = 1 AND VU.IsMember = 1
+		AND ((ISNULL(@Member, '') = '') OR (ISNULL(@Member, '') != '' AND (EXISTS (SELECT  1 FROM @Users WHERE CAST(Id AS varchar) = CAST(VU.MemberNumber AS VARCHAR)))))
+		AND ((ISNULL(@FromDate, '') = '') OR (ISNULL(@FromDate, '') != '' AND CAST(MU.VisitedTime AS DATE) >= CAST(@FromDate AS DATE)))
+		AND ((ISNULL(@ToDate, '') = '') OR (ISNULL(@ToDate, '') != '' AND ISNULL(@ToDate, '') != '' AND CAST(MU.VisitedTime AS DATE) <= CAST(@ToDate AS DATE)))
+
+		
+	  INSERT INTO @TempTable(RecordCount, Remarks,VisitedMonth,VisitedYear)
+	SELECT MAX(K.[ROW]), K.Remarks, K.VisitedMonth,K.VisitedYear FROM (
+	SELECT ROW_NUMBER() OVER (PARTITION BY K.Remarks ORDER BY MU.VisitedTime DESC) AS ROW, K.Remarks, MONTH(MU.VisitedTime) [VisitedMonth],YEAR(MU.VisitedTime) [VisitedYear]
+	FROM @ModuleUsuages MU
+		INNER JOIN 
+			(
+				SELECT 'Reviewed information of account%' AS Remarks
+				UNION ALL SELECT 'Failed to review information of account%' 
+				UNION ALL SELECT '%Reviewed balance of savings and Checkings%'
+				UNION ALL SELECT '%Failed to review balance of savings and Checkings%'
+				UNION ALL SELECT '%Reviewed balance of Certificates%'
+				UNION ALL SELECT '%Failed to review balance of Certificates%'
+				UNION ALL SELECT '%Reviewed balance of Loan balances%'
+				UNION ALL SELECT '%Failed to review balance of Loan balances%'
+				UNION ALL SELECT '%Reviewed  balance of all accounts%'
+				UNION ALL SELECT '%Failed to review balance of all accounts%'
+				UNION ALL SELECT 'Reviewed deposits made in last % days'
+				UNION ALL SELECT 'Failed to review deposits made in last % days'
+				UNION ALL SELECT 'Reviewed withdrawals made in last % days'
+				UNION ALL SELECT 'Failed to review withdrawals made in last % days'
+				UNION ALL SELECT 'Reviewed last % withdrawals made in last % days'
+				UNION ALL SELECT 'Failed to review last % withdrawals made made in last % days'
+				UNION ALL SELECT 'Reviewed last % cleared checks in last % days'
+				UNION ALL SELECT 'Failed to review last % cleared checks in last % days'
+				UNION ALL SELECT 'Reviewed all transactions in last % days'
+				UNION ALL SELECT 'Failed to review all transactions in last % days'
+				UNION ALL SELECT 'Failed to write check to self for %'
+				UNION ALL SELECT 'Wrote check of % for self'
+				UNION ALL SELECT 'Failed to stop payment on check %'
+				UNION ALL SELECT 'Stopped payment on check %'
+				UNION ALL SELECT 'Failed to stop payment on checks % - %'
+				UNION ALL SELECT 'Stopped payment on checks % - %'
+				UNION ALL SELECT 'Failed to review Interest, Dividends & Tax Withholding for this Year'
+				UNION ALL SELECT 'Reviewed Interest, Dividends & Tax Withholding for this Year'
+				UNION ALL SELECT 'Failed to review Interest, Dividends & Tax Withholding for last Year'
+				UNION ALL SELECT 'Reviewed Interest, Dividends & Tax Withholding for last Year'
+				UNION ALL SELECT 'Reviewed Payroll information'
+				UNION ALL SELECT 'Failed to review payroll'
+				UNION ALL SELECT 'Failed to change PIN'
+				UNION ALL SELECT 'Changed PIN successfully'
+				UNION ALL SELECT 'Failed to change primary mobile %'
+				UNION ALL SELECT 'Changed primary mobile from % to %'
+				UNION ALL SELECT 'Failed to change home phone %'
+				UNION ALL SELECT 'Changed home phone from % to %'
+				UNION ALL SELECT 'Failed to change work phone %'
+				UNION ALL SELECT 'Changed work phone from % to %'
+				UNION ALL SELECT '%Reviewed balance of account savings and Checkings%'
+				UNION ALL SELECT '%Failed to review balance of account savings and Checkings%'
+				UNION ALL SELECT '%Reviewed balance of account Certificates%'
+				UNION ALL SELECT '%Failed to review balance of account Certificates%'
+				UNION ALL SELECT '%Reviewed balance of account Loan balances%'
+				UNION ALL SELECT '%Failed to review balance of account Loan balances%'
+				UNION ALL SELECT 'Failed to transfer % from %-L% to %'
+				UNION ALL SELECT 'Failed to transfer % from % to %-L%'
+				UNION ALL SELECT 'Transfered % from %-L% to % successfully' 
+				UNION ALL SELECT 'Transfered % from % to %-L% successfully'
+				UNION ALL SELECT 'Failed to transfer % from %-L% to % of member %'
+				UNION ALL SELECT 'Failed to transfer % from % to %-L% of member %'
+				UNION ALL SELECT 'Transfered % from %-L% to % of member % successfully'
+				UNION ALL SELECT 'Transfered % from % to %-L% of member % successfully'
+				UNION ALL SELECT 'Failed to make payment of % towards mortgage loan %'
+				UNION ALL SELECT 'Made payment of % towards mortgage loan % successfully' 
+				UNION ALL SELECT 'Failed to make payment of % to credit card %'
+				UNION ALL SELECT 'Made payment of % to credit card % successfully'
+			) K ON MU.Remarks like K.Remarks
+			--Group By  MONTH(MU.VisitedTime)  ,YEAR(MU.VisitedTime) 
+	)K 
+	 GROUP BY K.Remarks,K.VisitedMonth,K.VisitedYear
+
+ 
+	INSERT INTO @TempTable(RecordCount, Remarks,VisitedMonth,VisitedYear)
+	SELECT COUNT(Remarks), 'Transfered % from % to % successfully' AS Remarks,MONTH(VisitedTime),YEAR(VisitedTime)
+	FROM @ModuleUsuages MU WHERE MU.Remarks like 'Transfered % from % to % successfully' and Remarks not like 'Transfered % from %-L% to %-L% successfully' 
+	AND Remarks not like 'Transfered % from %-L% to % successfully' AND Remarks not like 'Transfered % from % to %-L% successfully'
+	GROUP BY MONTH(VisitedTime),YEAR(VisitedTime)
+
+	INSERT INTO @TempTable(RecordCount, Remarks,VisitedMonth,VisitedYear)
+	SELECT COUNT(Remarks), 'Failed to transfer % from % to %' AS Remarks,MONTH(VisitedTime),YEAR(VisitedTime)
+	FROM @ModuleUsuages MU WHERE MU.Remarks like 'Failed to transfer % from % to %' and Remarks not like 'Failed to transfer % from %-L% to %-L%'
+	AND Remarks not like 'Failed to transfer % from %-L% to %' AND Remarks not like 'Failed to transfer % from % to %-L%'
+	GROUP BY MONTH(VisitedTime),YEAR(VisitedTime)
+
+	INSERT INTO @TempTable(RecordCount, Remarks,VisitedMonth,VisitedYear)
+	SELECT COUNT(Remarks), 'Failed to transfer % from % to % of member %' AS Remarks,MONTH(VisitedTime),YEAR(VisitedTime)
+	FROM @ModuleUsuages MU WHERE MU.Remarks like 'Failed to transfer % from % to % of member %' and Remarks not like 'Failed to transfer % from %-L% to %-L% of member %'
+	AND Remarks not like 'Failed to transfer % from %-L% to % of member %' AND Remarks not like 'Failed to transfer % from % to %-L% of member %'
+	GROUP BY MONTH(VisitedTime),YEAR(VisitedTime)
+
+	INSERT INTO @TempTable(RecordCount, Remarks,VisitedMonth,VisitedYear)
+	SELECT COUNT(Remarks), 'Transfered % from % to % of member % successfully' AS Remarks,MONTH(VisitedTime),YEAR(VisitedTime)
+	FROM @ModuleUsuages MU WHERE MU.Remarks like 'Transfered % from % to % of member % successfully' and Remarks not like 'Transfered % from %-L% to %-L% of member % successfully'
+	AND Remarks not like 'Transfered % from %-L% to % of member % successfully' AND Remarks not like 'Transfered % from % to %-L% of member % successfully'
+	GROUP BY MONTH(VisitedTime),YEAR(VisitedTime)
+
+	--INSERT INTO @TempTable(RecordCount, Remarks)
+	--SELECT MAX(K.ROW), K.Remarks FROM (
+	--SELECT ROW_NUMBER() OVER (PARTITION BY K.Remarks ORDER BY MU.VisitedTime DESC) AS ROW, K.Remarks
+	--FROM ModuleUsages MU WITH(NOLOCK) 
+	--	INNER JOIN VoiceBanking_Users VU WITH(NOLOCK) ON VU.UserID = MU.UserId
+	--	INNER JOIN ResourceModules RM WITH(NOLOCK) ON RM.ResModuleId = MU.ModuleId
+	--	INNER JOIN 
+	--		(
+	--			SELECT 'Reviewed information of account%' AS Remarks
+	--			UNION ALL SELECT 'Failed to review information of account%' 
+	--			UNION ALL SELECT '%Reviewed balance of savings and Checkings%'
+	--			UNION ALL SELECT '%Failed to review balance of savings and Checkings%'
+	--			UNION ALL SELECT '%Reviewed balance of Certificates%'
+	--			UNION ALL SELECT '%Failed to review balance of Certificates%'
+	--			UNION ALL SELECT '%Reviewed balance of Loan balances%'
+	--			UNION ALL SELECT '%Failed to review balance of Loan balances%'
+	--			UNION ALL SELECT '%Reviewed  balance of all accounts%'
+	--			UNION ALL SELECT '%Failed to review balance of all accounts%'
+	--			UNION ALL SELECT 'Reviewed deposits made in last % days'
+	--			UNION ALL SELECT 'Failed to review deposits made in last % days'
+	--			UNION ALL SELECT 'Reviewed withdrawals made in last % days'
+	--			UNION ALL SELECT 'Failed to review withdrawals made in last % days'
+	--			UNION ALL SELECT 'Reviewed last % withdrawals made in last % days'
+	--			UNION ALL SELECT 'Failed to review last % withdrawals made made in last % days'
+	--			UNION ALL SELECT 'Reviewed last % cleared checks in last % days'
+	--			UNION ALL SELECT 'Failed to review last % cleared checks in last % days'
+	--			UNION ALL SELECT 'Reviewed all transactions in last % days'
+	--			UNION ALL SELECT 'Failed to review all transactions in last % days'
+	--			UNION ALL SELECT 'Failed to write check to self for %'
+	--			UNION ALL SELECT 'Wrote check of % for self'
+	--			UNION ALL SELECT 'Failed to stop payment on check %'
+	--			UNION ALL SELECT 'Stopped payment on check %'
+	--			UNION ALL SELECT 'Failed to stop payment on checks % - %'
+	--			UNION ALL SELECT 'Stopped payment on checks % - %'
+	--			UNION ALL SELECT 'Failed to review Interest, Dividends & Tax Withholding for this Year'
+	--			UNION ALL SELECT 'Reviewed Interest, Dividends & Tax Withholding for this Year'
+	--			UNION ALL SELECT 'Failed to review Interest, Dividends & Tax Withholding for last Year'
+	--			UNION ALL SELECT 'Reviewed Interest, Dividends & Tax Withholding for last Year'
+	--			UNION ALL SELECT 'Reviewed Payroll information'
+	--			UNION ALL SELECT 'Failed to review payroll'
+	--			UNION ALL SELECT 'Failed to change PIN'
+	--			UNION ALL SELECT 'Changed PIN successfully'
+	--			UNION ALL SELECT 'Failed to change primary mobile %'
+	--			UNION ALL SELECT 'Changed primary mobile from % to %'
+	--			UNION ALL SELECT 'Failed to change home phone %'
+	--			UNION ALL SELECT 'Changed home phone from % to %'
+	--			UNION ALL SELECT 'Failed to change work phone %'
+	--			UNION ALL SELECT 'Changed work phone from % to %'
+	--		) K ON MU.Remarks like K.Remarks
+	--WHERE MU.ChannelId = @ChannelId AND BrandId = 1 AND VU.IsMember = 1
+	--	AND ((ISNULL(@Member, '') = '') OR (ISNULL(@Member, '') != '' AND (EXISTS (SELECT  1 FROM @Users WHERE Id = VU.UserId))))
+	--	AND ((ISNULL(@FromDate, '') = '') OR (ISNULL(@FromDate, '') != '' AND CAST(MU.VisitedTime AS DATE) >= CAST(@FromDate AS DATE)))
+	--	AND ((ISNULL(@ToDate, '') = '') OR (ISNULL(@ToDate, '') != '' AND ISNULL(@ToDate, '') != '' AND CAST(MU.VisitedTime AS DATE) <= CAST(@ToDate AS DATE)))
+	--)K GROUP BY K.Remarks
+
+	UPDATE @TempTable SET [Function] = (CASE WHEN Remarks = 'Reviewed information of account%' THEN 'Specific Account Information'
+					 WHEN Remarks = 'Failed to review information of account%' THEN 'Specific Account Information' 
+					 WHEN Remarks = '%Reviewed balance of savings and Checkings%' THEN 'Savings and Checkings Balances' 
+					 WHEN Remarks = '%Reviewed balance of account savings and Checkings%' THEN 'Savings and Checkings Balances' 
+					 WHEN Remarks = '%Failed to review balance of savings and Checkings%' THEN 'Savings and Checkings Balances'
+					 WHEN Remarks = '%Failed to review balance of account savings and Checkings%' THEN 'Savings and Checkings Balances'
+					 WHEN Remarks = '%Reviewed balance of Certificates%' THEN 'Certificates Balances'
+					 WHEN Remarks = '%Failed to review balance of Certificates%' THEN 'Certificates Balances'
+					 WHEN Remarks = '%Reviewed balance of account Certificates%' THEN 'Certificates Balances'
+					 WHEN Remarks = '%Failed to review balance of account Certificates%' THEN 'Certificates Balances'
+					 WHEN Remarks = '%Reviewed balance of Loan balances%' THEN 'Loan Balances'
+					 WHEN Remarks = '%Failed to review balance of Loan balances%' THEN 'Loan Balances'
+					 WHEN Remarks = '%Reviewed balance of account Loan balances%' THEN 'Loan Balances'
+					 WHEN Remarks = '%Failed to review balance of account Loan balances%' THEN 'Loan Balances'
+					 WHEN Remarks = '%Reviewed  balance of all accounts%' Then 'All Account Balances'
+					 WHEN Remarks = '%Failed to review balance of all accounts%' Then 'All Account Balances'
+					 WHEN Remarks = 'Reviewed deposits made in last % days' THEN 'Deposits'
+					 WHEN Remarks = 'Failed to review deposits made in last % days' THEN 'Deposits'
+					 WHEN Remarks = 'Reviewed withdrawals made in last % days' THEN 'Withdrawals'
+					 WHEN Remarks = 'Failed to review withdrawals made in last % days' THEN 'Withdrawals'
+					 WHEN Remarks = 'Reviewed last % withdrawals made in last % days' THEN 'Withdrawals'
+					 WHEN Remarks = 'Failed to review last % withdrawals made made in last % days' THEN 'Withdrawals'
+					 WHEN Remarks = 'Reviewed last % cleared checks in last % days' THEN 'Cleared Checks'
+					 WHEN Remarks = 'Failed to review last % cleared checks in last % days' THEN 'Cleared Checks'
+					 WHEN Remarks = 'Reviewed all transactions in last % days' THEN 'All Transactions'
+					 WHEN Remarks = 'Failed to review all transactions in last % days' THEN 'All Transactions'
+					 WHEN Remarks = 'Failed to write check to self for %' THEN 'Write Checks'
+					 WHEN Remarks = 'Wrote check of % for self' THEN 'Write Checks'
+					 WHEN Remarks = 'Failed to stop payment on check %' THEN 'Single Check'
+					 WHEN Remarks = 'Stopped payment on check %' THEN 'Single Check'
+					 WHEN Remarks = 'Failed to stop payment on checks % - %' THEN 'Range of Checks'
+					 WHEN Remarks = 'Stopped payment on checks % - %' THEN 'Range of Checks'
+					 WHEN Remarks = 'Failed to review Interest, Dividends & Tax Withholding for this Year' Then 'Tax Information'
+					 WHEN Remarks = 'Reviewed Interest, Dividends & Tax Withholding for this Year' Then 'Tax Information'
+					 WHEN Remarks = 'Failed to review Interest, Dividends & Tax Withholding for last Year' Then 'Tax Information'
+					 WHEN Remarks = 'Reviewed Interest, Dividends & Tax Withholding for last Year' Then 'Tax Information'
+					 WHEN Remarks = 'Reviewed Payroll information' THEN 'Payroll'
+					 WHEN Remarks = 'Failed to review payroll' THEN 'Payroll'
+					 WHEN Remarks = 'Failed to change PIN' THEN 'Pin Change'
+					 WHEN Remarks = 'Changed PIN successfully' THEN 'Pin Change'
+					 WHEN Remarks = 'Failed to change primary mobile %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Failed to change home phone %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Failed to change work phone %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Changed primary mobile from % to %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Changed home phone from % to %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Changed work phone from % to %' THEN 'Phone Number Change'
+					 WHEN Remarks = 'Transfered % from % to % successfully' THEN 'Transfer To/From Non-Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from % to %' THEN 'Transfer To/From Non-Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from % to % of member %' THEN 'Transfer To/From Non-Loan Accounts'
+					 WHEN Remarks = 'Transfered % from % to % of member % successfully' THEN 'Transfer To/From Non-Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from %-L% to %' THEN 'Transfer From Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from % to %-L%' THEN 'Transfer To Loan Accounts'
+					 WHEN Remarks = 'Transfered % from %-L% to % successfully' THEN 'Transfer From Loan Accounts'
+					 WHEN Remarks = 'Transfered % from % to %-L% successfully' THEN 'Transfer To Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from %-L% to % of member %' THEN 'Transfer From Loan Accounts'
+					 WHEN Remarks = 'Failed to transfer % from % to %-L% of member %' THEN 'Transfer To Loan Accounts'
+					 WHEN Remarks = 'Transfered % from %-L% to % of member % successfully' THEN 'Transfer From Loan Accounts'
+					 WHEN Remarks = 'Transfered % from % to %-L% of member % successfully' THEN 'Transfer To Loan Accounts'
+					 WHEN Remarks = 'Failed to make payment of % towards mortgage loan %' THEN 'Transfer To RELN Accounts'
+					 WHEN Remarks = 'Made payment of % towards mortgage loan % successfully' THEN 'Transfer To RELN Accounts'
+					 WHEN Remarks = 'Failed to make payment of % to credit card %'  THEN 'Transfer To CRCD Accounts'
+					 WHEN Remarks = 'Made payment of % to credit card % successfully'  THEN 'Transfer To CRCD Accounts'
+					 END)
+					, SuccessCount = (CASE WHEN Remarks = 'Reviewed information of account%' THEN RecordCount 
+						WHEN Remarks = '%Reviewed balance of savings and Checkings%' THEN RecordCount
+						WHEN Remarks = '%Reviewed balance of Certificates%' THEN RecordCount
+						WHEN Remarks = '%Reviewed balance of Loan balances%' THEN RecordCount
+						WHEN Remarks = '%Reviewed  balance of all accounts%' Then RecordCount
+						WHEN Remarks = 'Reviewed deposits made in last % days' THEN RecordCount
+						WHEN Remarks = 'Reviewed withdrawals made in last % days' THEN RecordCount
+						WHEN Remarks = 'Reviewed last % withdrawals made in last % days' THEN RecordCount
+						WHEN Remarks = 'Reviewed last % cleared checks in last % days' THEN RecordCount
+						WHEN Remarks = 'Reviewed all transactions in last % days' THEN RecordCount
+						WHEN Remarks = 'Wrote check of % for self' THEN RecordCount
+						WHEN Remarks = 'Stopped payment on check %' THEN RecordCount
+						WHEN Remarks = 'Stopped payment on checks % - %' THEN RecordCount
+						WHEN Remarks = 'Reviewed Interest, Dividends & Tax Withholding for this Year' Then RecordCount
+						WHEN Remarks = 'Reviewed Interest, Dividends & Tax Withholding for last Year' Then RecordCount
+						WHEN Remarks = 'Reviewed Payroll information' THEN RecordCount
+						WHEN Remarks = 'Changed PIN successfully' THEN RecordCount
+						WHEN Remarks = 'Changed primary mobile from % to %' THEN RecordCount
+						WHEN Remarks = 'Changed home phone from % to %' THEN RecordCount
+						WHEN Remarks = 'Changed work phone from % to %' THEN RecordCount
+						WHEN Remarks = '%Reviewed balance of account savings and Checkings%' THEN RecordCount
+						WHEN Remarks = '%Reviewed balance of account Certificates%' THEN RecordCount
+						WHEN Remarks = '%Reviewed balance of account Certificates%' THEN RecordCount
+						WHEN Remarks = 'Transfered % from % to % successfully' THEN RecordCount
+						WHEN Remarks = 'Transfered % from % to % of member % successfully' THEN RecordCount
+						WHEN Remarks = 'Transfered % from %-L% to % successfully' THEN RecordCount
+						WHEN Remarks = 'Transfered % from % to %-L% successfully' THEN RecordCount
+						WHEN Remarks = 'Transfered % from %-L% to % of member % successfully' THEN RecordCount
+						WHEN Remarks = 'Transfered % from % to %-L% of member % successfully' THEN RecordCount
+						WHEN Remarks = 'Made payment of % towards mortgage loan % successfully' THEN RecordCount
+						WHEN Remarks = 'Made payment of % to credit card % successfully' THEN RecordCount
+						END)
+					, FailureCount = (CASE WHEN Remarks = 'Failed to review information of account%' THEN RecordCount 
+						 WHEN Remarks = '%Failed to review balance of savings and Checkings%' THEN RecordCount 
+						 WHEN Remarks = '%Failed to review balance of Certificates%' THEN RecordCount
+						 WHEN Remarks = '%Failed to review balance of Loan balances%' THEN RecordCount
+						 WHEN Remarks = '%Failed to review balance of all accounts%' Then RecordCount
+						 WHEN Remarks = 'Failed to review deposits made in last % days' THEN RecordCount
+						 WHEN Remarks = 'Failed to review withdrawals made in last % days' THEN RecordCount
+						 WHEN Remarks = 'Failed to review last % withdrawals made made in last % days' THEN RecordCount
+						 WHEN Remarks = 'Failed to review last % cleared checks in last % days' THEN RecordCount
+						 WHEN Remarks = 'Failed to review all transactions in last % days' THEN RecordCount
+						 WHEN Remarks = 'Failed to write check to self for %' THEN RecordCount
+						 WHEN Remarks = 'Failed to stop payment on check %' THEN RecordCount
+						 WHEN Remarks = 'Failed to stop payment on checks % - %' THEN RecordCount
+						 WHEN Remarks = 'Failed to review Interest, Dividends & Tax Withholding for this Year' Then RecordCount
+						 WHEN Remarks = 'Failed to review Interest, Dividends & Tax Withholding for last Year' Then RecordCount
+						 WHEN Remarks = 'Failed to review payroll' THEN RecordCount
+						 WHEN Remarks = 'Failed to change PIN' THEN RecordCount
+						 WHEN Remarks = 'Failed to change primary mobile %' THEN RecordCount
+						 WHEN Remarks = 'Failed to change home phone %' THEN RecordCount
+						 WHEN Remarks = 'Failed to change work phone %' THEN RecordCount
+						 WHEN Remarks = '%Failed to review balance of account savings and Checkings%' THEN RecordCount
+						 WHEN Remarks = '%Failed to review balance of account Certificates%' THEN RecordCount
+						 WHEN Remarks = '%Failed to review balance of account Loan balances%' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from % to %' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from % to % of member %' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from %-L% to %' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from % to %-L%' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from %-L% to % of member %' THEN RecordCount
+						 WHEN Remarks = 'Failed to transfer % from % to %-L% of member %' THEN RecordCount
+						 WHEN Remarks = 'Failed to make payment of % towards mortgage loan %' THEN RecordCount
+						 WHEN Remarks = 'Failed to make payment of % to credit card %' THEN RecordCount
+					END)
+
+	
+	--SELECT [Function],
+	--  (SELECT DISTINCT SUM(SuccessCount)
+	--           FROM @TempTable t2
+	--           WHERE t2.[Function] = t1.[Function]) AS SuccessCount,
+	--  ISNULL((SELECT DISTINCT SUM(FailureCount)
+	--           FROM @TempTable t2
+	--           WHERE t2.[Function] = t1.[Function]), 0) AS FailureCount  
+	--FROM @TempTable t1
+	--GROUP BY [Function]
+
+	UPDATE T1 SET SuccessCount = ISNULL((SELECT DISTINCT SUM(SuccessCount)
+								   FROM @TempTable t2
+								   WHERE t2.[Function] = t1.[Function] AND T2.VisitedMonth=t1.VisitedMonth AND T2.VisitedYear=t1.VisitedYear),0),
+			   FailureCount =  ISNULL((SELECT DISTINCT SUM(FailureCount)
+								   FROM @TempTable t2
+								   WHERE t2.[Function] = t1.[Function] AND T2.VisitedMonth=t1.VisitedMonth AND T2.VisitedYear=t1.VisitedYear), 0)
+	FROM @TempTable T1
+
+
+
+	UPDATE T1 SET T1.FailureCount = T2.FailureCount, T1.SuccessCount = T2.SuccessCount, T1.TotalCount = T2.SuccessCount + T2.FailureCount 
+	 ,T1.VisitedMonth=T2.VisitedMonth,T1.VisitedYear=T2.VisitedYear
+	FROM @TempTable1 T1 
+		INNER JOIN @TempTable T2 ON T1.[Function] = T2.[Function]
+
+	 -- SELECT * FROM @TempTable
+	 --SELECT * FROM @TempTable1
+
+	UPDATE @TempTable1 SET TotalCount = (
+		SELECT COUNT(*) FROM VoiceBanking_Users VU WITH(NOLOCK)
+		WHERE VU.RegistrationStatus = 1 AND VU.IsMember = 1
+		AND ((ISNULL(@Member, '') = '') OR (ISNULL(@Member, '') != '' AND (EXISTS (SELECT  1 FROM @Users WHERE Id = VU.UserId))))
+		AND ((ISNULL(@FromDate, '') = '') OR (ISNULL(@FromDate, '') != '' AND CAST(VU.RegistrationDate AS DATE) >= CAST(@FromDate AS DATE)))
+		AND ((ISNULL(@ToDate, '') = '') OR (ISNULL(@ToDate, '') != '' AND ISNULL(@ToDate, '') != '' AND CAST(VU.RegistrationDate AS DATE) <= CAST(@ToDate AS DATE)))
+	)
+	WHERE [Function] = 'Total Registerations'
+
+
+	UPDATE T1 
+	SET T1.SuccessCount =T2.SuccessCount, T1.FailureCount = T2.FailureCount, T1.TotalCount = T2.TotalCount,ParentId=-1
+	FROM @TempTable1 T1 JOIN (SELECT SUM(T2.SuccessCount) [SuccessCount], SUM(T2.FailureCount) [FailureCount], SUM(T2.TotalCount) [TotalCount],T1.Id FROM @TempTable1 T1
+	INNER JOIN @TempTable1 T2 ON T1.Id = T2.ParentId AND T1.VisitedMonth=T2.VisitedMonth AND T1.VisitedYear=T2.VisitedYear
+	GROUP BY T2.ParentId, T1.Id) T2 ON T1.Id =T2.Id
+
+	--SELECT * FROM @TempTable1  WHERE VisitedYear IS NOT NULL
+	 SELECT datename(month, dateadd(month, VisitedMonth,-1)),[Function],SuccessCount,FailureCount,TotalCount,VisitedYear FROM @TempTable1  WHERE VisitedYear IS NOT NULL
+ UNION 
+ (SELECT datename(month, dateadd(month, VisitedMonth,-1)),[Function],SuccessCount,FailureCount,RecordCount,VisitedYear FROM @TempTable  WHERE VisitedYear IS NOT NULL
+ EXCEPT
+ SELECT datename(month, dateadd(month, VisitedMonth,-1)),[Function],SuccessCount,FailureCount,TotalCount,VisitedYear FROM @TempTable1  WHERE VisitedYear IS NOT NULL)
+
+
+	 
+END
+
+
